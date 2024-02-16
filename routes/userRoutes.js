@@ -10,8 +10,13 @@ const {
     changePassword,
     getAllDonations,
     verifyForgetPasswordUser,
+    createConversation,
+    getConverationDetails,
     request_changeForgetPassword,
+    communityDetails,
     createComunity,
+    joinCommunity,
+    getAllConversations,
     getAllCommunities,
     get_services_wishlist,
     requestCustomerSupport,
@@ -24,7 +29,7 @@ const {
 } = require("../controlers/userControler");
 const { isAuthenticated } = require("../middlewares/auth");
 const {upload} = require('../utils/multer');
-const { new_funeral, update_funeral, addEvent , addGuest , getFuneralDetails ,bookABusiness } = require("../controlers/funeralControler");
+const { new_funeral, update_funeral, addEvent , getEvents , getAllGuests , addGuest ,getChecklist , getFuneralDetails ,bookABusiness } = require("../controlers/funeralControler");
 
 
 // important middlewares
@@ -53,6 +58,8 @@ userRouter.get("/getUserById/:id", getUserById)
 
 //comunity routes
 userRouter.post("/community/new", isAuthenticated,  upload.single("thumbnail") , createComunity)
+userRouter.get("/community/join/:community_id", isAuthenticated,   joinCommunity)
+userRouter.get("/community/details/:community_id", isAuthenticated,   communityDetails)
 userRouter.get("/community/all", isAuthenticated,   getAllCommunities)
 
 
@@ -74,14 +81,24 @@ userRouter.post("/donation/new",  isAuthenticated,  upload.any(), createDonation
 userRouter.get("/donation/all",  isAuthenticated,  upload.any(), getAllDonations)
 
 
+//conversation 
+userRouter.get("/conversations/new/:business_id", isAuthenticated, createConversation )
+userRouter.get("/conversations/details/:conversation_id", isAuthenticated, getConverationDetails )
+userRouter.get("/conversations/all", isAuthenticated, getAllConversations )
+
+
+
 
 // funeral
 userRouter.post("/funeral/new", isAuthenticated, upload.any(), new_funeral)
 userRouter.post("/funeral/booking/new", isAuthenticated, upload.any(), bookABusiness)
 userRouter.post("/funeral/addEvent", isAuthenticated, upload.any(), addEvent)
-userRouter.get("/funeral/details/:funeral_id", isAuthenticated, upload.any(), getFuneralDetails)
+userRouter.get("/funeral/getChecklist", isAuthenticated, getChecklist)
+userRouter.get("/funeral/allGuests", isAuthenticated, getAllGuests)
+userRouter.get("/funeral/getEvents", isAuthenticated, getEvents)
+userRouter.get("/funeral/details", isAuthenticated, upload.any(), getFuneralDetails)
 userRouter.post("/funeral/addGuest", isAuthenticated, upload.any(), addGuest)
-userRouter.put("/funeral/update/:funeral_id", isAuthenticated, upload.any(), update_funeral)
+userRouter.put("/funeral/update", isAuthenticated, upload.any(), update_funeral)
 
 
 

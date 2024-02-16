@@ -3,14 +3,17 @@ const express = require("express")
 const app = express()
 const cors = require("cors")
 const bodyParser = require("body-parser")
-const PORT = process.env.PORT || 8000;
+const PORT = process.env.PORT || 8001;
 const { isAuthenticated, verifyRole } = require("./middlewares/auth");
 require("./config/db")
 const path = require('path')
 const User = require('./models/user/userModel')
 const fs = require('fs')
-const VendorConversation = require('./models/vendor/vendorConversation')
-const Message = require('./models/messageModel')
+const Conversation = require('./models/user/conversationModel')
+
+const Community = require('./models/user/communityModel')
+const CommunityMessage = require('./models/user/communityMessageModel')
+const Message = require('./models/user/messageModel')
 var http = require('http');
 
 
@@ -32,6 +35,8 @@ const stripe = require('stripe')('sk_test_51KiiRNDs0edGSqAmcnTPzbYm945ppuerWhPzk
 
 const morgan = require('morgan');
 const { default: axios } = require("axios");
+const { upload } = require("./utils/multer");
+const { ErrorResponse, SuccessResponse } = require("./helpers/responseService");
 
 var io = require('socket.io')(server, {
   cors: {
@@ -137,329 +142,6 @@ io.on('connection', async (socket) => {
 
 
 
-  // Handling new BusinessConversation creation
-  socket.on('createBusinessConversation', async ({ createdBy, createdFor, businessReff }) => {
-    console.log("createBusinessConversation ")
-    const roomId = generateRoomId(createdBy, createdFor, businessReff);
-    const roomExists = await BusinessConversation.findOne({ socketRoomId: roomId })
-    const createdUserExists = verifyUserToJoinRoom(userJoinId, roomId)
-    if (!createdUserExists) {
-      console.log("room can't acccess this conversation")
-      return io.emit('error', { message: "Something Went Wrong !" });
-    }
-    socket.join(roomId);
-
-    if (roomExists) {
-      console.log("room already exists")
-      return io.to(roomId).emit('chatAlreadyExists', roomExists);
-    }
-
-    try {
-      const conversation = await BusinessConversation.create({
-        createdBy,
-        createdFor,
-        socketRoomId: roomId,
-        businessReff
-      });
-      // Emit an event to the users involved in the BusinessConversation
-      io.to(roomId).emit('newBusinessConversation', conversation);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-
-
-
-
-  // Handling new BusinessConversation creation
-  socket.on('createBrokerConversation', async ({ createdBy, createdFor, brokerReff }) => {
-    console.log("createBrokerConversation")
-    const roomId = generateRoomId(createdBy, createdFor, brokerReff);
-    const roomExists = await BrokerConversation.findOne({ socketRoomId: roomId })
-    const createdUserExists = verifyUserToJoinRoom(userJoinId, roomId)
-    if (!createdUserExists) {
-      console.log("room can't acccess this conversation")
-      return io.emit('error', { message: "Something Went Wrong !" });
-    }
-    socket.join(roomId);
-
-    if (roomExists) {
-      console.log("room already exists")
-      return io.to(roomId).emit('chatAlreadyExists', roomExists);
-    }
-    try {
-      const conversation = await BrokerConversation.create({
-        createdBy,
-        createdFor,
-        socketRoomId: roomId,
-        brokerReff
-      });
-      io.to(roomId).emit('newBrokerConversation', conversation);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-  // Handling sending messages
-  socket.on('sendMessageToBusiness', async ({ sender, receiver, businessConversationId, content, images, docs, videos }) => {
-    console.log("sendMessageToBusiness")
-    const imagesArray = [];
-    const docsArray = [];
-    const videosArray = [];
-
-    if (images && images.length > 0) {
-      images.forEach((img, i) => {
-        let file_name = Date.now() + "_" + img.name;
-        imagesArray.push('/uploads/chat/images/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'images', file_name), Buffer.from(img.buffer));
-      })
-    }
-    if (docs && docs.length > 0) {
-      docs.forEach((doc, i) => {
-        let file_name = Date.now() + "_" + doc.name;
-        docsArray.push('/uploads/chat/docs/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'docs', file_name), Buffer.from(doc.buffer));
-      })
-    }
-    if (videos && videos.length > 0) {
-      videos.forEach((video, i) => {
-        let file_name = Date.now() + "_" + video.name;
-        videosArray.push('/uploads/chat/videos/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'videos', file_name), Buffer.from(video.buffer));
-      })
-    }
-    try {
-
-      console.log({ imagesArray })
-      const chatExits = await BusinessConversation.findById(businessConversationId).select("socketRoomId")
-      const socketRoomId = chatExits.socketRoomId
-
-
-
-      const roomSockets = io.sockets.adapter.rooms.get(socketRoomId);
-
-      const message = await Message.create({
-        sender,
-        receiver,
-        businessConversation: businessConversationId,
-        content,
-        type: "BUSINESS",
-        images: imagesArray,
-        docs: docsArray,
-        videos: videosArray
-      });
-
-
-
-
-      const uniqueUsers = new Set();
-
-      if (roomSockets) {
-        roomSockets.forEach((socketId) => {
-          const userSocket = io.sockets.sockets.get(socketId);
-          const userId = userSocket?.handshake.query.userid;
-
-          if (userId) {
-            uniqueUsers.add(userId);
-          }
-        });
-      }
-
-      // Check if there are two unique users in the room
-      if (uniqueUsers.size === 2) {
-        // await Message.updateMany({ businessConversation: businessConversationId }, { $set: { isRead: true } });
-
-        message.isRead = true;
-        console.log("isRead : true")
-      } else {
-        console.log("isRead : false")
-        message.isRead = false;
-      }
-
-      await message.save();
-
-      // Update the BusinessConversation with the new message
-      await BusinessConversation.findByIdAndUpdate(
-        businessConversationId,
-        { $push: { messages: message._id }, lastMessage: message._id },
-        { new: true }
-      );
-      // Emit the new message to the users involved in the BusinessConversation
-      io.to(socketRoomId).emit('newMessageToBusiness', message);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-
-
-  // Handling sending messages
-  socket.on('sendMessageToBroker', async ({ sender, receiver, brokerConversation, content, images, docs, videos }) => {
-
-
-    const imagesArray = [];
-    const docsArray = [];
-    const videosArray = [];
-
-    if (images && images.length > 0) {
-      images.forEach((img, i) => {
-        let file_name = Date.now() + "_" + img.name;
-        imagesArray.push('/uploads/chat/images/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'images', file_name), Buffer.from(img.buffer));
-      })
-    }
-    if (docs && docs.length > 0) {
-      docs.forEach((doc, i) => {
-        let file_name = Date.now() + "_" + doc.name;
-        docsArray.push('/uploads/chat/docs/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'docs', file_name), Buffer.from(doc.buffer));
-      })
-    }
-    if (videos && videos.length > 0) {
-      videos.forEach((video, i) => {
-        let file_name = Date.now() + "_" + video.name;
-        videosArray.push('/uploads/chat/videos/' + file_name)
-        fs.writeFileSync(path.join(__dirname, 'public', 'uploads', 'chat', 'videos', file_name), Buffer.from(video.buffer));
-      })
-    }
-
-
-    try {
-      const chatExits = await BrokerConversation.findById(brokerConversation).select("socketRoomId")
-      console.log({ chatExits })
-      const socketRoomId = chatExits.socketRoomId
-      console.log({ socketRoomId })
-      const roomSockets = io.sockets.adapter.rooms.get(socketRoomId);
-
-
-      const message = await Message.create({
-        sender,
-        receiver,
-        brokerConversation,
-        type: "BROKER",
-        content,
-        images: imagesArray,
-        docs: docsArray,
-        videos: videosArray
-      });
-
-
-
-
-      const uniqueUsers = new Set();
-
-      if (roomSockets) {
-        roomSockets.forEach((socketId) => {
-          const userSocket = io.sockets.sockets.get(socketId);
-          const userId = userSocket?.handshake.query.userid;
-
-          if (userId) {
-            uniqueUsers.add(userId);
-          }
-        });
-      }
-
-      // Check if there are two unique users in the room
-      if (uniqueUsers.size === 2) {
-        message.isRead = true;
-        await Message.updateMany({ brokerConversation }, { $set: { isRead: true } });
-        console.log("isRead : true")
-      } else {
-        console.log("isRead : false")
-        message.isRead = false;
-      }
-      console.log({ uniqueUsers })
-      await message.save();
-
-      // Update the BusinessConversation with the new message
-      await BrokerConversation.findByIdAndUpdate(
-        brokerConversation,
-        { $push: { messages: message._id }, lastMessage: message._id },
-        { new: true }
-      );
-      // Emit the new message to the users involved in the BusinessConversation
-      io.to(socketRoomId).emit('newMessageToBroker', message);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-
-
-  // Handling getting all BusinessConversations for a user
-  socket.on('getAllBusinessConversations', async ({ userId }) => {
-    socket.join(userId)
-    try {
-      const BusinessConversations = await BusinessConversation.find({
-        $or: [{ createdBy: userId }, { createdFor: userId }],
-      }).populate('businessReff').populate({
-        path: 'messages',
-        options: { sort: { createdAt: 1 } }
-      });
-
-
-      if (userId !== userJoinId) {
-        console.log("You can't access other's chats !")
-        return io.to(userId).emit("error", { message: "you can't access other's conversations !" })
-      }
-      const calculateUnreadMessagesCount = (messages) => {
-        return messages.filter(message => !message.isRead).length;
-      };
-
-      const businessConversationsWithUnreadMessages = BusinessConversations.map(conversation => {
-        const unreadMessagesCount = calculateUnreadMessagesCount(conversation.messages);
-        return {
-          ...conversation.toObject(),
-          unreadMessages: unreadMessagesCount,
-        };
-      });
-      console.log({ businessConversationsWithUnreadMessages })
-      io.to(userId).emit('allBusinessConversations', businessConversationsWithUnreadMessages);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-
-
-
-  socket.on('getAllBrokerConversations', async ({ userId }) => {
-    socket.join(userId)
-
-    try {
-      const brokerConversations = await BrokerConversation.find({
-        $or: [{ createdBy: userId }, { createdFor: userId }],
-      }).populate('brokerReff').populate({
-        path: 'messages',
-        options: { sort: { createdAt: -1 } }
-      });
-
-      if (userId !== userJoinId) {
-        console.log("You can't access other's chats !")
-        return io.to(userId).emit("error", { message: "you can't access other's conversations !" })
-      }
-
-      const calculateUnreadMessagesCount = (messages) => {
-        return messages.filter(message => !message.isRead).length;
-      };
-      const brokerConversationsWithUnreadMessages = brokerConversations.map(conversation => {
-        const unreadMessagesCount = calculateUnreadMessagesCount(conversation.messages);
-        return {
-          ...conversation.toObject(), // Convert Mongoose document to plain JavaScript object
-          unreadMessages: unreadMessagesCount,
-        };
-      });
-
-      console.log({ brokerConversationsWithUnreadMessages })
-      io.to(userId).emit('allBrokerConversations', brokerConversationsWithUnreadMessages);
-    } catch (error) {
-      console.error(error);
-    }
-  });
-
-
-
 
   // Handling user disconnection
   socket.on('disconnect', async () => {
@@ -484,9 +166,123 @@ io.on('connection', async (socket) => {
 
 
 
+
+
+
 // routes configurations
 app.use("/api", require("./routes/index"))
 // app.use("/api/dashboard" , require("./routes/dashboard-api/index"))
+
+
+
+
+
+app.post("/api/user/conversations/sendMessage", upload.any(), async (req, res) => {
+  try {
+
+
+    console.log(req.files)
+    const { conversationId, message , sender , receiver } = req.body
+    console.log(req.body)
+    const conversation = await Conversation.findById(conversationId)
+    if (!conversation) {
+      return ErrorResponse(res, "Conversation Not Found !")
+    }
+    
+    if (!sender || !receiver) {
+      return ErrorResponse(res, "Sender / Receiver Not Found !")
+    }
+
+    const images = req.files && req.files.length > 0 && req.files.filter(item => item.fieldname === "images").map((image) =>{
+     return  `/uploads/${image.filename}`
+    })
+
+
+    console.log({images})
+
+
+
+
+    const newMessage = Message({
+      senderId: sender,
+      receiverId: receiver,
+      conversationId,
+      images: images && images.length > 0 ? images : [],
+      message: message ? message : null
+    })
+
+
+    console.log({newMessage})
+    conversation.messages.push(newMessage._id)
+    conversation.lastMessage= newMessage._id
+
+    await conversation.save()
+    await newMessage.save()
+    console.log({receiver})
+    io.to(receiver).to(sender).emit("newMessage", newMessage)
+    return SuccessResponse(res, newMessage)
+
+
+
+  } catch (error) {
+    console.log({ error })
+    return ErrorResponse(res, error.message)
+  }
+
+})
+
+
+
+
+
+app.post("/api/community/sendMessage", upload.any(), isAuthenticated, async (req, res) => {
+  try {
+
+
+    const { community_id , message  } = req.body
+    const community = await Community.findById(community_id)
+    if (!community) {
+      return ErrorResponse(res, "community Not Found !")
+    }
+    
+    
+    const images = req.files && req.files.length > 0 && req.files.filter(item => item.fieldname === "images").map((image) =>{
+     return  `/uploads/${image.filename}`
+    })
+
+
+    console.log({images})
+
+
+
+
+    const newMessage = CommunityMessage({
+      userReff : req.user._id,
+      images: images && images.length > 0 ? images : [],
+      commnityReff : req.user.id,
+      message: message ? message : null
+    })
+
+
+    console.log({newMessage})
+    community.discusssion.push(newMessage._id)
+    images && images.length > 0 &&   community.images.push(...images)
+
+    await community.save()
+    await newMessage.save()
+    // io.to(receiver).to(sender).emit("newMessage", newMessage)
+    return SuccessResponse(res, newMessage)
+
+
+
+  } catch (error) {
+    console.log({ error })
+    return ErrorResponse(res, error.message)
+  }
+
+})
+
+
 
 
 

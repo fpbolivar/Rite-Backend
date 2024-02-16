@@ -26,13 +26,13 @@ const newCheckBox = async (req, res) => {
       if(!funeral_id){
         return ErrorResponse(res, 'Funeral Id is required !')
       }
-      const checkbox =  Checklist({  title})
+      const checkbox =  Checklist({  title  , isChecked : true})
       const funeral = await Funeral.findById(funeral_id)
       funeral.checklist.push(checkbox._id)
       await checkbox.save()
       await funeral.save()
       return SuccessResponse(res, checkbox)
-    }else if(type === "FUNERAL" ) {
+    }else if(type === "FUNERAL_DEFAULT" ) {
       const checkbox =  await Checklist({  title , type}).save()
       SuccessResponse(res, checkbox)
     }
@@ -50,14 +50,24 @@ const newCheckBox = async (req, res) => {
 const updateCheckbox = async (req, res) => {
   try {
     const { checkbox_id } = req.params;
-    const checkbox = await Checklist.findById(checkbox_id);
+    let checked ;
+    const funeral = await Funeral.findOne({createdBy : req.user.id})
 
-    if (!checkbox) {
+    if (!funeral) {
       return ErrorResponse(res, "Checkbox not found");
     }
-    checkbox.isChecked = !checkbox.isChecked;
-    await checkbox.save(); 
-    SuccessResponse(res, "Toggled successfully");
+    // checkbox.isChecked = !checkbox.isChecked;
+    if (funeral.checklist.includes(checkbox_id)) {
+      const filtertedChecklist  = funeral.checklist.filter(item => item.toString() !== checkbox_id.toString())
+      checked = false
+      funeral.checklist = filtertedChecklist
+    } else {
+      checked = true
+      funeral.checklist.push(checkbox_id)
+    }
+    await funeral.save();   
+    const checkbox = await Checklist.findById(checkbox_id)
+    SuccessResponse(res, {...checkbox._doc , isChecked : checked });
   } catch (error) {
     console.error('Error toggling checkbox:', error);
     return ErrorResponse(res, error.message);

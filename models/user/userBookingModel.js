@@ -6,6 +6,8 @@ const userBookingSchema = mongoose.Schema({
     bookingEndTime: { type: Date, default: null },
     description: { type: String, default: null },
     userReff: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    categoryReff: { type: mongoose.Schema.Types.ObjectId, ref: 'Category' },
+    type : {String},
     funeralReff: { type: mongoose.Schema.Types.ObjectId, ref: 'Funeral' },
     businessReff: { type: mongoose.Schema.Types.ObjectId, ref: 'Business' },
     payment: {

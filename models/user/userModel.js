@@ -9,6 +9,7 @@ const userSchema = mongoose.Schema({
     profilePic: String,
     salt: String,
     password: String,
+    funeralReff : {  type: mongoose.Types.ObjectId, ref: 'Funeral'},
     resetPasswordToken: {
         type: String,
     },
@@ -34,9 +35,6 @@ const userSchema = mongoose.Schema({
     },
     isActive: { type: Boolean, default: true },
     isVerified: { type: Boolean, default: false },
-    checklist: [{
-        type: mongoose.Types.ObjectId, ref: 'Checklist'
-    }],
     wishlist: [{
         type: mongoose.Types.ObjectId, ref: 'Business'
     }],

@@ -4,6 +4,8 @@ const Event = require('../models/user/eventModels')
 const Guest = require('../models/user/guestModel')
 const UserBooking = require('../models/user/userBookingModel')
 const Checklist = require('../models/checklistModel')
+const Business = require('../models/vendor/businesModel')
+
 
 const { ErrorResponse, SuccessResponse } = require('../helpers/responseService')
 
@@ -30,7 +32,7 @@ const new_funeral = async (req, res) => {
             return ErrorResponse(res, "User Not Matched !")
         }
 
-        const selectedCheckBoxes = await Checklist.find({ type: "FUNERAL" });
+        const selectedCheckBoxes = await Checklist.find({ type: "FUNERAL_DEFAULT" });
         const selectedList = selectedCheckBoxes.map(item => ({ title: item.title }));
 
         const list = await Checklist.insertMany(selectedList);
@@ -65,7 +67,7 @@ const new_funeral = async (req, res) => {
 
 const update_funeral = async (req, res) => {
     try {
-        const funeralId = req.params.funeral_id;
+        
         const {
             name,
             funeral_date,
@@ -81,7 +83,7 @@ const update_funeral = async (req, res) => {
         const image = req.files ? req.files[0]?.filename : "";
         console.log({ image })
 
-        const funeral = await Funeral.findById(funeralId);
+        const funeral = await Funeral.findOne({createdBy : req.user.id});
         if (!funeral) {
             return ErrorResponse(res, "Funeral Not Found!");
         }
@@ -102,7 +104,22 @@ const update_funeral = async (req, res) => {
         // }
 
 
-        const updatedFuneral = await Funeral.findByIdAndUpdate(funeralId, update, { new: true }).populate("checklist");
+        const updatedFuneral = await Funeral.findOneAndUpdate({createdBy : req.user.id}, update, { new: true })
+        .populate({
+            path: "events",
+            select: "-funeralReff",
+            populate: { path: "guests" }
+        })
+        .populate({
+            path: "checklist"
+        })
+        .populate({
+            path: "bookings",
+            populate: [
+                { path: "userReff", select: "fullname email phone" },
+                { path: "businessReff", select: "businessDetails" },
+                { path: "funeralReff", select: "name" }]
+        });
 
         return SuccessResponse(res, updatedFuneral);
     } catch (error) {
@@ -140,9 +157,24 @@ const addEvent = async (req, res) => {
             funeral.events = funeral.events || [];
             funeral.events.push(body._id);
             await funeral.save()
-            return SuccessResponse(res, "success")
+            return SuccessResponse(res, body)
         }
 
+    } catch (error) {
+        console.log({ error })
+        return ErrorResponse(res, error.message)
+    }
+}
+
+const getEvents = async (req, res) => {
+    try {
+        
+        const funeral = await Funeral.findOne({createdBy : req.user.id}).select("events").populate("events")
+        if(!funeral){
+              return ErrorResponse(res, "No Funeral Exits !")
+        }
+
+          return SuccessResponse(res, funeral.events) 
     } catch (error) {
         console.log({ error })
         return ErrorResponse(res, error.message)
@@ -173,7 +205,7 @@ const addGuest = async (req, res) => {
         ));
 
 
-        return SuccessResponse(res, "succcess")
+        return SuccessResponse(res, guest)
     } catch (error) {
         console.log({ error })
         return ErrorResponse(res, error.message)
@@ -184,8 +216,7 @@ const addGuest = async (req, res) => {
 
 const getFuneralDetails = async (req, res) => {
     try {
-        const { funeral_id } = req.params
-        const funeral = await Funeral.findById(funeral_id)
+        const funeral = await Funeral.findOne({createdBy : req.user.id})
             .populate({
                 path: "events",
                 select: "-funeralReff",
@@ -202,7 +233,32 @@ const getFuneralDetails = async (req, res) => {
                     { path: "funeralReff", select: "name" }]
             });
 
+
+            if(!funeral){
+                  return ErrorResponse(res, "No Funeral Found !")
+            }
+            console.log({funeral})
         return SuccessResponse(res, funeral)
+    } catch (error) {
+        console.log({ error })
+        return ErrorResponse(res, error.message)
+    }
+}
+
+
+const getChecklist = async (req, res) => {
+    try {
+        const funeralChecklist = await Funeral.findOne({ createdBy: req.user.id }).select("checklist").populate("checklist");        
+        const checklist = await Checklist.find({ type: "FUNERAL_DEFAULT" });
+        const formatedChecklist = checklist.map((item) => {
+            return {
+                ...item._doc,
+                type : undefined,
+                isChecked : funeralChecklist.checklist.some(field => field.title === item.title)
+            }
+        });
+        
+        return SuccessResponse(res, formatedChecklist)
     } catch (error) {
         console.log({ error })
         return ErrorResponse(res, error.message)
@@ -214,6 +270,24 @@ const addEventxxxx = async (req, res) => {
     try {
 
         return SuccessResponse(res, "succcess")
+
+    } catch (error) {
+        console.log({ error })
+        return ErrorResponse(res, error.message)
+    }
+}
+
+const getAllGuests = async (req, res) => {
+    try {
+
+        
+        const funeral = await Funeral.findOne({ createdBy: req.user.id }).select('events').populate({path : "events" , select : "guests" , populate  : {
+            path : "guests"
+        }})     
+        
+        const combinedGuests = funeral.events.reduce((acc, event) => acc.concat(event.guests), []);
+        return SuccessResponse(res, combinedGuests)
+
     } catch (error) {
         console.log({ error })
         return ErrorResponse(res, error.message)
@@ -223,7 +297,23 @@ const bookABusiness = async (req, res) => {
     try {
         console.log(req.body)
 
-        const {  bookingDate, bookingStartTime, bookingEndTime, description, funeralReff, businessReff } = req.body;
+  const {  bookingDate, bookingStartTime, bookingEndTime, description, funeralReff, businessReff , type } = req.body;
+
+    if(!bookingDate || bookingDate == ""){
+          return ErrorResponse(res, "Date is Required !")
+    }
+    // if(!bookingStartTime || bookingStartTime == "" || !bookingEndTime || bookingEndTime !== ""){
+    //     return ErrorResponse(res, "Booking time  is Required !")
+    // }
+    if(!funeralReff || funeralReff == ""){
+          return ErrorResponse(res, "Date is Required !")
+    }
+    if(!businessReff || businessReff == ""){
+          return ErrorResponse(res, "Date is Required !")
+    }
+
+
+
 
         const startTime = new Date(`${bookingDate} ${bookingStartTime}`);
         const endTime = new Date(`${bookingDate} ${bookingEndTime}`);
@@ -231,8 +321,13 @@ const bookABusiness = async (req, res) => {
         console.log({ endTime })
 
         const user = await User.findById(req.user.id)
+        const business = await Business.findById(businessReff)
+        console.log({business})
         const funeral = await Funeral.findById(funeralReff).select('bookings').populate("bookings")
         console.log({ funeral })
+        if (!business) {
+            return ErrorResponse(res, "No Business Exits !")
+        }
         if (!user) {
             return ErrorResponse(res, "No user Exits !")
         }
@@ -246,7 +341,9 @@ const bookABusiness = async (req, res) => {
             bookingStartTime: startTime,
             bookingEndTime: endTime,
             description,
+            type,
             funeralReff,
+            categoryReff : business.category,
             businessReff
 
         })
@@ -278,6 +375,9 @@ module.exports = {
     getFuneralDetails,
     addEvent,
     bookABusiness,
+    getChecklist,
+    getAllGuests,
+    getEvents,
     addGuest,
     update_funeral
 }

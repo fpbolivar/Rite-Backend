@@ -6,6 +6,7 @@ const bcrypt = require('bcrypt');
 const { ErrorResponse, SuccessResponse } = require("../helpers/responseService");
 const ReportUser = require('../models/user/reportUser')
 const Vendor = require("../models/vendor/vendorModel");
+const Conversation = require("../models/user/conversationModel")
 const customerSupport = require("../models/user/customerSupport");
 const sendRegistrationEmail = require("../config/emailConfigs/emailConfig");
 
@@ -13,8 +14,13 @@ const sendForgotPinCodeEmail = require("../config/emailConfigs/forgetEmail");
 const Funeral = require("../models/user/funeralModel");
 const Community = require("../models/user/communityModel");
 const sharp = require('sharp')
-const Donation = require('../models/user/donationModel')
+const Checklist = require("../models/checklistModel")
 
+const Donation = require('../models/user/donationModel')
+const Business = require("../models/vendor/businesModel")
+const Commnitymessage = require("../models/user/communityMessageModel")
+
+const Event = require("../models/user/eventModels")
 const axios = require("axios")
 
 
@@ -23,7 +29,7 @@ const axios = require("axios")
 
 const registerUser = async (req, res) => {
   console.log("inside userCotnroler")
-  console.log({body : req.body})
+  console.log({ body: req.body })
   const passwordRegex = /^(?=.*[A-Z])(?=.*[!@#$%^&*])(?=.*\d).{8,}$/;
   try {
     const { fullname, email, password, phone } = req.body;
@@ -39,7 +45,7 @@ const registerUser = async (req, res) => {
     }
 
     const userExists = await User.findOne({ email: req.body.email.toLowerCase().replace(/\s/g, '') })
-    console.log({userExists})
+    console.log({ userExists })
 
     if (userExists) {
       return ErrorResponse(res, 'This Email Is Already Registered Please Login Instead ')
@@ -50,17 +56,31 @@ const registerUser = async (req, res) => {
     }
 
 
-    //   const passHash = await bcrypt.hash(password, 10)
+    const selectedCheckBoxes = await Checklist.find({ $and : [{ type: "FUNERAL_DEFAULT" } , {isChecked : true} ]});
+    const selectedList = selectedCheckBoxes.map(item => ({ title: item.title, isChecked: true }));
+
+    const list = await Checklist.insertMany(selectedList);
+
+
+    const listIds = list.map((item) => item._id)
+
+
     let salt = bcrypt.genSaltSync(10);
     let hash = bcrypt.hashSync(password, salt);
     const reqBody = new User({
       fullname,
-      email : email.toLowerCase(),
+      email: email.toLowerCase(),
       phone,
       profilePic: "/assets/user_profile.png",
       salt,
       password: hash,
     })
+    
+    const event =  await  Event({title : "Janaza " , funeralReff: reqBody._id}).save()
+    const funeral = await Funeral({ createdBy: reqBody._id, checklist: listIds , events : event._id }).save()
+    
+    
+    reqBody.funeralReff = funeral._id;
     let user = await reqBody.save()
     const token = await genJwtToken(user._id)
     console.log({ token })
@@ -102,13 +122,27 @@ const continue_with_google = async (req, res) => {
     console.log({ gogoleBody: req.body })
     const userExists = await User.findOne({ email })
 
-    console.log({userExists})
+    console.log({ userExists })
     let fileName;
     const emailName = email.toString().split("@")[0]
     if (photoURL) {
       fileName = `/uploads/${emailName}_${Date.now()}.webp`
       downloadAndProcessImage(photoURL, `./public${fileName}`)
     }
+
+
+
+    const selectedCheckBoxes = await Checklist.find({ $and : [{ type: "FUNERAL_DEFAULT" } , {isChecked : true} ]});
+    const selectedList = selectedCheckBoxes.map(item => ({ title: item.title, isChecked: true }));
+
+    const list = await Checklist.insertMany(selectedList);
+
+
+    const listIds = list.map((item) => item._id)
+
+
+
+
 
     if (!userExists) {
       const newUser = User({
@@ -117,6 +151,10 @@ const continue_with_google = async (req, res) => {
         profilePic: fileName,
         phone: phoneNumber
       })
+      const event =  await  Event({title : "Janaza " , funeralReff: newUser._id}).save()
+      const funeral = await Funeral({ createdBy: newUser._id, checklist: listIds , events : event._id }).save()
+      
+      newUser.funeralReff = funeral._id;
       const saveUser = await newUser.save()
       const token = await genJwtToken(saveUser._id)
       console.log({ token })
@@ -264,14 +302,14 @@ const createComunity = async (req, res) => {
   console.log(req.user)
   console.log(req.body)
   try {
-    const { title, description  , type} = req.body;
-    const community =  Community({
+    const { title, description } = req.body;
+    const community = Community({
       title,
-      userReff : req.user.id,
+      userReff: req.user.id,
       description,
-      type,
-      thumbnail : req.file && `/uploads/${req.file.filename}`
+      thumbnail: req.file && `/uploads/${req.file.filename}`
     })
+
 
     community.members.push(req.user.id)
     await community.save()
@@ -289,18 +327,18 @@ const createDonation = async (req, res) => {
   console.log(req.user)
   console.log(req.body)
   try {
-    const { title, description   , target , achieved} = req.body;
+    const { title, description, target, achieved } = req.body;
     const donation = await Donation({
       title,
       description,
       target,
-      userReff : req.user.id,
+      userReff: req.user.id,
       achieved,
-      picture : req.files[0] &&`/uploads/${req.files[0].filename}`,
+      picture: req.files[0] && `/uploads/${req.files[0].filename}`,
     }).save()
 
-    
-    
+
+
     SuccessResponse(res, donation)
   } catch (error) {
 
@@ -321,12 +359,24 @@ const getAllDonations = async (req, res) => {
   }
 };
 
+const communityDetails = async (req, res) => {
+
+  try {
+    const donations = await Community.findById(req.params.community_id).populate({ path : "members" , select : "fullname email profilePic"}).populate("discusssion")
+    SuccessResponse(res, donations)
+  } catch (error) {
+
+    console.error('Error deleting user:', error);
+    return ErrorResponse(res, error.message);
+  }
+};
+
 
 // Delete user
 const getAllCommunities = async (req, res) => {
- 
+
   try {
-    const communities = await Community.find({ members  : {$in : [req.user.id]}}).sort({createdAt : -1});
+    const communities = await Community.find({ members: { $in: [req.user.id] } }).sort({ createdAt: -1 }).populate({ path : "members"  , select : "email fullname profilePic"});
 
     SuccessResponse(res, communities)
   } catch (error) {
@@ -368,8 +418,8 @@ const verifyForgetPasswordUser = async function (req, res) {
 
     }
     let user = await User.findOne({ email: req.params.email })
-    if(!user){
-        return ErrorResponse(res, "No User exits !")
+    if (!user) {
+      return ErrorResponse(res, "No User exits !")
     }
     console.log({ user })
     let OTPCODE = Math.floor(1000 + Math.random() * 9000);
@@ -385,7 +435,7 @@ const verifyForgetPasswordUser = async function (req, res) {
     if (user == null || user.length < 1) {
       return ErrorResponse(res, "User Not Matched !")
     } else {
-      return SuccessResponse(res, { id: user._id, otp_generatedAt, otp_expiresAt , OTPCODE })
+      return SuccessResponse(res, { id: user._id, otp_generatedAt, otp_expiresAt, OTPCODE })
     }
   } catch (error) {
     console.log(error)
@@ -500,8 +550,8 @@ const changePassword = async (req, res) => {
       return ErrorResponse(res, "User Not Matched !")
     }
 
-    if(!user.password){
-        return ErrorResponse(res, "your account is created via Social Login , please reset your password first!")
+    if (!user.password) {
+      return ErrorResponse(res, "your account is created via Social Login , please reset your password first!")
     }
     const match = await bcrypt.compare(oldPassword, user.password);
 
@@ -529,7 +579,7 @@ const changePassword = async (req, res) => {
   }
 }
 
-const  get_services_wishlist = async (req, res) => {
+const get_services_wishlist = async (req, res) => {
   try {
     // const user = await User.findById(req.user.id).select('services_wishlist').populate("services_wishlist")
     const user = await User.findById(req.user.id).select('wishlist').populate("wishlist")
@@ -545,6 +595,31 @@ const  get_services_wishlist = async (req, res) => {
     ErrorResponse(res, error.message)
   }
 }
+const joinCommunity = async (req, res) => {
+  try {
+    const { community_id} = req.params
+    console.log({community_id})
+    const community = await Community.findById(community_id).select("members")
+    if(!community){
+        return ErrorResponse(res, "No Commuity Found !")
+    }
+
+
+    if(community.members.some(member => member._id.toString() === req.user.id)) {
+      return ErrorResponse(res,"You are already a member of this community.");
+  } else {
+      community.members.push(req.user.id);
+      await community.save();
+      const updatedCommunity = await Community.findById(community_id).populate({path : "members" , select : "fullname email profilePic"})
+      return SuccessResponse(res, updatedCommunity);
+  } 
+  
+
+  } catch (error) {
+    console.log(error)
+    ErrorResponse(res, error.message)
+  }
+}
 const check_service_in_wishlist = async (req, res) => {
   const { business_id } = req.params
   try {
@@ -554,11 +629,123 @@ const check_service_in_wishlist = async (req, res) => {
     }
 
     if (user.wishlist.includes(business_id)) {
-      return SuccessResponse(res,  true)
+      return SuccessResponse(res, true)
     } else {
-      return SuccessResponse(res,  false )
+      return SuccessResponse(res, false)
     }
 
+  } catch (error) {
+    console.log(error)
+    ErrorResponse(res, error.message)
+  }
+}
+
+
+const createConversation = async (req, res) => {
+  try {
+    const {business_id} = req.params
+    
+
+    const business = await Business.findById(business_id)
+    console.log({business})
+    if(!business){
+        return ErrorResponse(res, "No Vendor exists !")
+    }
+    const createdBy = req.user.id
+    const createdFor = business.vendorRef
+    console.log({createdFor})
+    const chatExits = await Conversation.findOne({
+            $and: [
+              {
+                $or: [
+                  { createdBy: createdBy, createdFor: createdFor },
+                  { createdBy: createdFor, createdFor: createdBy },
+                ],
+              },
+              { businessReff: business_id },
+            ],
+          }).select("_id")
+
+    if(chatExits){
+        return ErrorResponse(res, "Conversation Already Exists !")
+    }
+
+    const newConversation = await Conversation({
+    createdBy,
+    createdFor,
+    businessReff : business_id
+    }).save()
+    
+    const conversationDetails = await Conversation.findById(newConversation._id)
+    .populate({path : "createdBy" , select : "fullname email profilePic"})
+    .populate({path : "createdFor" , select : "fullname email profilePic"})
+
+
+      return SuccessResponse(res, conversationDetails)
+  } catch (error) {
+    console.log(error)
+    ErrorResponse(res, error.message)
+  }
+}
+const getConverationDetails = async (req, res) => {
+  try {
+    const {conversation_id} = req.params
+    
+
+    const conversation = await Conversation.findById(conversation_id)
+    .populate({ path : "createdBy" , select : "fullname email profilePic"})
+    .populate({ path : "createdFor" , select : "fullname email profilePic"})
+    .populate({ path : "businessReff" , select : "businessDetails location gallery"})
+    .populate({ path : "messages" })
+    console.log({conversation})
+    if(!conversation){
+        return ErrorResponse(res, "No conversation exists !")
+    }
+   
+      return SuccessResponse(res, conversation)
+  } catch (error) {
+    console.log(error)
+    ErrorResponse(res, error.message)
+  }
+}
+
+const getAllConversations = async (req, res) => {
+  try {
+    
+    const conversations = await Conversation.find({
+          $or: [
+            { createdBy: req.user.id },
+            { createdFor: req.user.id }
+          ]
+    })
+    .populate({ path : "createdBy" , select : "fullname email profilePic"})
+    .populate({ path : "createdFor" , select : "fullname email profilePic"})
+    .populate({ path : "businessReff" , select : "businessDetails location gallery"})
+    .populate({ path : "messages" , select : "message seen"})
+    .populate({ path : "lastMessage" , select : "message seen" })
+
+
+    const calculateUnreadMessagesCount = (messages) => {
+      return messages.filter(message => message.seen === false).length;
+    };
+
+
+    const formatedConservastion = conversations.map((item) => {
+      const unreadMessagesCount = calculateUnreadMessagesCount(item.messages);
+      const { messages, ...rest } = item.toObject()
+      return {
+        ...rest,
+        unRead: `${unreadMessagesCount}`
+      }
+    })
+
+
+    console.log({conversations})
+    if(!conversations || Number(conversations.length) === 0){
+        return ErrorResponse(res, "No conversation exists !")
+    }
+   
+      return SuccessResponse(res, formatedConservastion)
   } catch (error) {
     console.log(error)
     ErrorResponse(res, error.message)
@@ -700,7 +887,7 @@ const report_user = async (req, res) => {
 
 
 const genJwtToken = async function (id) {
-  const token = jwt.sign({ id }, process.env.JWT_SECRET_KEY, { expiresIn: "24h" })
+  const token = jwt.sign({ id }, process.env.JWT_SECRET_KEY, { expiresIn: "29d" })
   return token;
 }
 const genJwtForgetPasswordToken = async function (id) {
@@ -737,11 +924,16 @@ module.exports = {
   get_services_wishlist,
   requestCustomerSupport,
   check_service_in_wishlist,
+  communityDetails,
   createComunity,
   getAllCommunities,
+  joinCommunity,
+  createConversation,
   createDonation,
   getAllDonations,
   report_user,
   forgetPasswordUserOtpValidation,
   continue_with_google,
+  getConverationDetails,
+  getAllConversations
 };
